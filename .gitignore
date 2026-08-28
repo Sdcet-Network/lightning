@@ -1,0 +1,9 @@
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+.pytest_cache/
+.playwright-cli/
+.venv/
+datas/
+dispatch.yaml
