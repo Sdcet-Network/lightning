@@ -81,15 +81,15 @@ def create_project(body: CreateProjectRequest):
         now = utcnow()
 
         conn.execute(
-            "INSERT INTO projects (id, title, status, bootstrap_enabled, created_at) VALUES (?, ?, 'active', ?, ?)",
+            "INSERT INTO projects (id, title, status, bootstrap_enabled, created_at) VALUES (%s, %s, 'active', %s, %s)",
             (pid, body.title, body.bootstrap_enabled, now),
         )
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
+            "INSERT INTO facts (id, project_id, description) VALUES (%s, %s, %s)",
             ("origin", pid, body.origin),
         )
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
+            "INSERT INTO facts (id, project_id, description) VALUES (%s, %s, %s)",
             ("goal", pid, body.goal),
         )
 
@@ -98,7 +98,7 @@ def create_project(body: CreateProjectRequest):
             for h in body.hints:
                 hid = next_hint_id(conn, pid)
                 conn.execute(
-                    "INSERT INTO hints (id, project_id, content, creator, created_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO hints (id, project_id, content, creator, created_at) VALUES (%s, %s, %s, %s, %s)",
                     (hid, pid, h.content, h.creator, now),
                 )
                 hints.append(Hint(id=hid, content=h.content, creator=h.creator, created_at=now))
@@ -129,10 +129,10 @@ def get_project(project_id: str):
         row = get_project_or_404(conn, project_id)
 
         facts = conn.execute(
-            "SELECT * FROM facts WHERE project_id = ?", (project_id,)
+            "SELECT * FROM facts WHERE project_id = %s", (project_id,)
         ).fetchall()
         hints = conn.execute(
-            "SELECT * FROM hints WHERE project_id = ? ORDER BY created_at",
+            "SELECT * FROM hints WHERE project_id = %s ORDER BY created_at",
             (project_id,),
         ).fetchall()
 
@@ -148,7 +148,7 @@ def get_project(project_id: str):
 def delete_project(project_id: str):
     with get_conn() as conn:
         get_project_or_404(conn, project_id)
-        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.execute("DELETE FROM projects WHERE id = %s", (project_id,))
 
 
 @router.put("/projects/{project_id}/title", response_model=ProjectMeta)
@@ -156,10 +156,10 @@ def update_project_title(project_id: str, body: UpdateProjectTitleRequest):
     with get_conn() as conn:
         get_project_or_404(conn, project_id)
         conn.execute(
-            "UPDATE projects SET title = ? WHERE id = ?",
+            "UPDATE projects SET title = %s WHERE id = %s",
             (body.title, project_id),
         )
-        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        updated = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         return project_meta_from_row(updated)
 
 
@@ -175,16 +175,16 @@ def update_project_status(project_id: str, body: UpdateProjectStatusRequest):
             return project_meta_from_row(row)
 
         conn.execute(
-            "UPDATE projects SET status = ? WHERE id = ?",
+            "UPDATE projects SET status = %s WHERE id = %s",
             (body.status, project_id),
         )
         if body.status == "stopped":
             conn.execute(
-                "UPDATE intents SET worker = NULL WHERE project_id = ? AND concluded_at IS NULL",
+                "UPDATE intents SET worker = NULL WHERE project_id = %s AND concluded_at IS NULL",
                 (project_id,),
             )
             clear_project_reason(conn, project_id)
-        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        updated = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         return project_meta_from_row(updated)
 
 
@@ -204,15 +204,15 @@ def claim_project_reason(project_id: str, body: ReasonClaimRequest):
         conn.execute(
             """
             UPDATE projects
-            SET reason_worker = ?,
-                reason_trigger = ?,
-                reason_started_at = ?,
-                reason_last_heartbeat_at = ?
-            WHERE id = ?
+            SET reason_worker = %s,
+                reason_trigger = %s,
+                reason_started_at = %s,
+                reason_last_heartbeat_at = %s
+            WHERE id = %s
             """,
             (body.worker, body.trigger, now, now, project_id),
         )
-        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        updated = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         return project_meta_from_row(updated)
 
 
@@ -230,10 +230,10 @@ def heartbeat_project_reason(project_id: str, body: HeartbeatRequest):
 
         now = utcnow()
         conn.execute(
-            "UPDATE projects SET reason_last_heartbeat_at = ? WHERE id = ?",
+            "UPDATE projects SET reason_last_heartbeat_at = %s WHERE id = %s",
             (now, project_id),
         )
-        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        updated = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         return project_meta_from_row(updated)
 
 
@@ -250,7 +250,7 @@ def release_project_reason(project_id: str, body: HeartbeatRequest):
             raise HTTPException(409, f"Project reason is currently claimed by {current_worker}")
 
         clear_project_reason(conn, project_id)
-        updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        updated = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         return project_meta_from_row(updated)
 
 
@@ -266,12 +266,12 @@ def complete_project(project_id: str, body: CompleteRequest):
         iid = next_intent_id(conn, project_id)
 
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, 'goal', ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (%s, %s, 'goal', %s, %s, %s, %s, %s, %s)",
             (iid, project_id, body.description, body.worker, body.worker, now, now, now),
         )
         for fid in body.from_:
             conn.execute(
-                "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES (?, ?, ?)",
+                "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES (%s, %s, %s)",
                 (iid, project_id, fid),
             )
         conn.execute(
@@ -282,7 +282,7 @@ def complete_project(project_id: str, body: CompleteRequest):
                 reason_trigger = NULL,
                 reason_started_at = NULL,
                 reason_last_heartbeat_at = NULL
-            WHERE id = ?
+            WHERE id = %s
             """,
             (project_id,),
         )
@@ -308,7 +308,7 @@ def reopen_project(project_id: str, body: ReopenRequest):
         completion = get_completion_intent_or_409(conn, project_id)
 
         source_rows = conn.execute(
-            "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
+            "SELECT fact_id FROM intent_sources WHERE intent_id = %s AND project_id = %s ORDER BY id",
             (completion["id"], project_id),
         ).fetchall()
         source_ids = [row["fact_id"] for row in source_rows]
@@ -322,31 +322,31 @@ def reopen_project(project_id: str, body: ReopenRequest):
         creator = body.creator
 
         conn.execute(
-            "DELETE FROM intents WHERE id = ? AND project_id = ?",
+            "DELETE FROM intents WHERE id = %s AND project_id = %s",
             (completion["id"], project_id),
         )
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
+            "INSERT INTO facts (id, project_id, description) VALUES (%s, %s, %s)",
             (fact_id, project_id, description),
         )
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (intent_id, project_id, fact_id, "external_feedback", creator, creator, now, now, now),
         )
         for source_id in source_ids:
             conn.execute(
-                "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES (?, ?, ?)",
+                "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES (%s, %s, %s)",
                 (intent_id, project_id, source_id),
             )
         clear_project_reason(conn, project_id)
         conn.execute(
-            "UPDATE projects SET status = 'active' WHERE id = ?",
+            "UPDATE projects SET status = 'active' WHERE id = %s",
             (project_id,),
         )
 
-        updated_project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        updated_project = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
         updated_intent = conn.execute(
-            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            "SELECT * FROM intents WHERE id = %s AND project_id = %s",
             (intent_id, project_id),
         ).fetchone()
         assert updated_project is not None

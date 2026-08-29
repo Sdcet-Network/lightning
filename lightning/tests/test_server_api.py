@@ -8,9 +8,7 @@ from lightning.server.app import app
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setattr(db, "_db_path", None)
-    db.configure(tmp_path / "lightning.db")
+def client(mysql_ready) -> TestClient:
     with TestClient(app) as test_client:
         yield test_client
 
@@ -139,11 +137,11 @@ def test_expired_intent_and_reason_leases_can_be_reclaimed(client: TestClient) -
     )
     with db.get_conn() as conn:
         conn.execute(
-            "UPDATE intents SET last_heartbeat_at = '2000-01-01T00:00:00Z' WHERE project_id = ?",
+            "UPDATE intents SET last_heartbeat_at = '2000-01-01T00:00:00Z' WHERE project_id = %s",
             (project_id,),
         )
         conn.execute(
-            "UPDATE projects SET reason_last_heartbeat_at = '2000-01-01T00:00:00Z' WHERE id = ?",
+            "UPDATE projects SET reason_last_heartbeat_at = '2000-01-01T00:00:00Z' WHERE id = %s",
             (project_id,),
         )
 

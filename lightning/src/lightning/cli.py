@@ -17,17 +17,17 @@ def main():
 @click.option("--host", default="127.0.0.1", show_default=True, help="Bind host")
 @click.option("--port", default=8000, show_default=True, help="Bind port")
 @click.option(
-    "--db-path",
-    type=click.Path(),
-    default=str(db.DEFAULT_DB),
+    "--db-url",
+    type=str,
+    default=db.DEFAULT_DB_URL,
     show_default=True,
-    help="SQLite database path",
+    help="MySQL connection URL (mysql://user:pass@host:port/database)",
 )
 @click.option("--log-level", default="info", show_default=True, help="Uvicorn log level")
 @click.option("--access-log/--no-access-log", default=True, show_default=True, help="Enable Uvicorn access log")
-def serve(host: str, port: int, db_path: str, log_level: str, access_log: bool):
+def serve(host: str, port: int, db_url: str, log_level: str, access_log: bool):
     """Start the 闪电（lightning） API server."""
-    db.configure(Path(db_path))
+    db.configure(db_url)
     from lightning.server.app import app
 
     uvicorn.run(

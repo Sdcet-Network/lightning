@@ -25,21 +25,21 @@ def _load_project_data(conn, project_id: str):
     proj = get_project_or_404(conn, project_id)
 
     facts = conn.execute(
-        "SELECT id, description FROM facts WHERE project_id = ?", (project_id,)
+        "SELECT id, description FROM facts WHERE project_id = %s", (project_id,)
     ).fetchall()
     hints = conn.execute(
-        "SELECT content, creator, created_at FROM hints WHERE project_id = ? ORDER BY created_at",
+        "SELECT content, creator, created_at FROM hints WHERE project_id = %s ORDER BY created_at",
         (project_id,),
     ).fetchall()
     intents = conn.execute(
-        "SELECT * FROM intents WHERE project_id = ? ORDER BY created_at",
+        "SELECT * FROM intents WHERE project_id = %s ORDER BY created_at",
         (project_id,),
     ).fetchall()
 
     sources_by_intent = {}
     for i in intents:
         rows = conn.execute(
-            "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
+            "SELECT fact_id FROM intent_sources WHERE intent_id = %s AND project_id = %s ORDER BY id",
             (i["id"], project_id),
         ).fetchall()
         sources_by_intent[i["id"]] = [r["fact_id"] for r in rows]

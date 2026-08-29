@@ -16,7 +16,6 @@ from lightning.dispatcher.models import ReasonCheckpoint
 from lightning.dispatcher.protocol.client import ApiResult
 from lightning.dispatcher.runtime.process import ProcessResult
 from lightning.dispatcher.scheduler.loop import DispatcherLoop
-from lightning.server import db
 from lightning.server.app import app
 from lightning.server.models import ProjectDetail, ProjectSummary, Settings
 
@@ -175,9 +174,7 @@ class LocalContainerManager:
 
 
 @pytest.fixture
-def http_client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setattr(db, "_db_path", None)
-    db.configure(tmp_path / "lightning.db")
+def http_client(mysql_ready) -> TestClient:
     with TestClient(app) as client:
         yield client
 

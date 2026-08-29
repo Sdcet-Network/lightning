@@ -1,75 +1,84 @@
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
+from lightning.server.db import Connection, Row
 from lightning.server.models import Intent, ProjectMeta, ProjectReason
 
 def utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def next_project_id(conn: sqlite3.Connection) -> str:
+def _parse_heartbeat(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def next_project_id(conn: Connection) -> str:
     conn.execute("UPDATE counters SET value = value + 1 WHERE name = 'project'")
     row = conn.execute("SELECT value FROM counters WHERE name = 'project'").fetchone()
     return f"proj_{row['value']:03d}"
 
 
 def _next_scoped_id(
-    conn: sqlite3.Connection, kind: str, prefix: str, project_id: str
+    conn: Connection, kind: str, prefix: str, project_id: str
 ) -> str:
     conn.execute(
-        "INSERT OR IGNORE INTO scoped_counters (project_id, kind, value) VALUES (?, ?, 0)",
+        "INSERT IGNORE INTO scoped_counters (project_id, kind, value) VALUES (%s, %s, 0)",
         (project_id, kind),
     )
     conn.execute(
-        "UPDATE scoped_counters SET value = value + 1 WHERE project_id = ? AND kind = ?",
+        "UPDATE scoped_counters SET value = value + 1 WHERE project_id = %s AND kind = %s",
         (project_id, kind),
     )
     row = conn.execute(
-        "SELECT value FROM scoped_counters WHERE project_id = ? AND kind = ?",
+        "SELECT value FROM scoped_counters WHERE project_id = %s AND kind = %s",
         (project_id, kind),
     ).fetchone()
     assert row is not None
     return f"{prefix}{row['value']:03d}"
 
 
-def next_fact_id(conn: sqlite3.Connection, project_id: str) -> str:
+def next_fact_id(conn: Connection, project_id: str) -> str:
     return _next_scoped_id(conn, "fact", "f", project_id)
 
 
-def next_intent_id(conn: sqlite3.Connection, project_id: str) -> str:
+def next_intent_id(conn: Connection, project_id: str) -> str:
     return _next_scoped_id(conn, "intent", "i", project_id)
 
 
-def next_hint_id(conn: sqlite3.Connection, project_id: str) -> str:
+def next_hint_id(conn: Connection, project_id: str) -> str:
     return _next_scoped_id(conn, "hint", "h", project_id)
 
 
-def get_project_or_404(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
-    row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+def get_project_or_404(conn: Connection, project_id: str) -> Row:
+    row = conn.execute("SELECT * FROM projects WHERE id = %s", (project_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "Project not found")
     return row
 
 
-def check_project_active(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
+def check_project_active(conn: Connection, project_id: str) -> Row:
     row = get_project_or_404(conn, project_id)
     if row["status"] != "active":
         raise HTTPException(403, f"Project is {row['status']}")
     return row
 
 
-def check_project_hint_writable(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
+def check_project_hint_writable(conn: Connection, project_id: str) -> Row:
     row = get_project_or_404(conn, project_id)
     if row["status"] not in ("active", "stopped", "completed"):
         raise HTTPException(403, f"Project is {row['status']}")
     return row
 
 
-def check_project_completed(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
+def check_project_completed(conn: Connection, project_id: str) -> Row:
     row = get_project_or_404(conn, project_id)
     if row["status"] != "completed":
         raise HTTPException(403, f"Project is {row['status']}")
@@ -77,11 +86,11 @@ def check_project_completed(conn: sqlite3.Connection, project_id: str) -> sqlite
 
 
 def validate_facts_exist(
-    conn: sqlite3.Connection, project_id: str, fact_ids: list[str]
+    conn: Connection, project_id: str, fact_ids: list[str]
 ) -> None:
     for fid in fact_ids:
         row = conn.execute(
-            "SELECT 1 FROM facts WHERE id = ? AND project_id = ?", (fid, project_id)
+            "SELECT 1 FROM facts WHERE id = %s AND project_id = %s", (fid, project_id)
         ).fetchone()
         if row is None:
             raise HTTPException(404, f"Fact {fid} not found")
@@ -98,10 +107,10 @@ def validate_intent_creator_worker(creator: str, worker: str | None) -> None:
 
 
 def get_intent_or_404(
-    conn: sqlite3.Connection, project_id: str, intent_id: str
-) -> sqlite3.Row:
+    conn: Connection, project_id: str, intent_id: str
+) -> Row:
     row = conn.execute(
-        "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+        "SELECT * FROM intents WHERE id = %s AND project_id = %s",
         (intent_id, project_id),
     ).fetchone()
     if row is None:
@@ -110,8 +119,8 @@ def get_intent_or_404(
 
 
 def get_claimable_open_intent_or_404(
-    conn: sqlite3.Connection, project_id: str, intent_id: str, worker: str
-) -> sqlite3.Row:
+    conn: Connection, project_id: str, intent_id: str, worker: str
+) -> Row:
     expire_workers(conn, project_id)
     row = get_intent_or_404(conn, project_id, intent_id)
     if row["to_fact_id"] is not None:
@@ -122,8 +131,8 @@ def get_claimable_open_intent_or_404(
 
 
 def get_releasable_open_intent_or_404(
-    conn: sqlite3.Connection, project_id: str, intent_id: str, worker: str
-) -> sqlite3.Row:
+    conn: Connection, project_id: str, intent_id: str, worker: str
+) -> Row:
     expire_workers(conn, project_id)
     row = get_intent_or_404(conn, project_id, intent_id)
     if row["to_fact_id"] is not None:
@@ -135,9 +144,9 @@ def get_releasable_open_intent_or_404(
     return row
 
 
-def get_completion_intent_or_409(conn: sqlite3.Connection, project_id: str) -> sqlite3.Row:
+def get_completion_intent_or_409(conn: Connection, project_id: str) -> Row:
     rows = conn.execute(
-        "SELECT * FROM intents WHERE project_id = ? AND to_fact_id = 'goal'",
+        "SELECT * FROM intents WHERE project_id = %s AND to_fact_id = 'goal'",
         (project_id,),
     ).fetchall()
     if not rows:
@@ -147,9 +156,9 @@ def get_completion_intent_or_409(conn: sqlite3.Connection, project_id: str) -> s
     return rows[0]
 
 
-def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str) -> Intent:
+def intent_to_model(conn: Connection, row: Row, project_id: str) -> Intent:
     sources = conn.execute(
-        "SELECT fact_id FROM intent_sources WHERE intent_id = ? AND project_id = ? ORDER BY rowid",
+        "SELECT fact_id FROM intent_sources WHERE intent_id = %s AND project_id = %s ORDER BY id",
         (row["id"], project_id),
     ).fetchall()
     return Intent(
@@ -165,25 +174,25 @@ def intent_to_model(conn: sqlite3.Connection, row: sqlite3.Row, project_id: str)
     )
 
 
-def build_intents(conn: sqlite3.Connection, project_id: str) -> list[Intent]:
+def build_intents(conn: Connection, project_id: str) -> list[Intent]:
     rows = conn.execute(
-        "SELECT * FROM intents WHERE project_id = ? ORDER BY created_at",
+        "SELECT * FROM intents WHERE project_id = %s ORDER BY created_at",
         (project_id,),
     ).fetchall()
     return [intent_to_model(conn, r, project_id) for r in rows]
 
 
-def get_intent_timeout(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT intent_timeout FROM settings WHERE rowid = 1").fetchone()
+def get_intent_timeout(conn: Connection) -> int:
+    row = conn.execute("SELECT intent_timeout FROM settings WHERE id = 1").fetchone()
     return row["intent_timeout"]
 
 
-def get_reason_timeout(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT reason_timeout FROM settings WHERE rowid = 1").fetchone()
+def get_reason_timeout(conn: Connection) -> int:
+    row = conn.execute("SELECT reason_timeout FROM settings WHERE id = 1").fetchone()
     return row["reason_timeout"]
 
 
-def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
+def project_reason_from_row(row: Row) -> ProjectReason | None:
     if row["reason_worker"] is None:
         return None
     return ProjectReason(
@@ -194,7 +203,7 @@ def project_reason_from_row(row: sqlite3.Row) -> ProjectReason | None:
     )
 
 
-def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
+def project_meta_from_row(row: Row) -> ProjectMeta:
     return ProjectMeta(
         id=row["id"],
         title=row["title"],
@@ -205,7 +214,7 @@ def project_meta_from_row(row: sqlite3.Row) -> ProjectMeta:
     )
 
 
-def clear_project_reason(conn: sqlite3.Connection, project_id: str) -> None:
+def clear_project_reason(conn: Connection, project_id: str) -> None:
     conn.execute(
         """
         UPDATE projects
@@ -213,45 +222,44 @@ def clear_project_reason(conn: sqlite3.Connection, project_id: str) -> None:
             reason_trigger = NULL,
             reason_started_at = NULL,
             reason_last_heartbeat_at = NULL
-        WHERE id = ?
+        WHERE id = %s
         """,
         (project_id,),
     )
 
 
-def expire_workers(conn: sqlite3.Connection, project_id: str | None = None) -> None:
+def expire_workers(conn: Connection, project_id: str | None = None) -> None:
     timeout = get_intent_timeout(conn)
-    now = utcnow()
-    query = """
-        UPDATE intents
-        SET worker = NULL
-        WHERE to_fact_id IS NULL
-          AND worker IS NOT NULL
-          AND last_heartbeat_at IS NOT NULL
-          AND (julianday(?) - julianday(last_heartbeat_at)) * 86400 > ?
-    """
-    params: tuple = (now, timeout)
+    now = datetime.now(timezone.utc)
+    query = (
+        "SELECT id, project_id, last_heartbeat_at FROM intents "
+        "WHERE to_fact_id IS NULL AND worker IS NOT NULL AND last_heartbeat_at IS NOT NULL"
+    )
+    params: tuple = ()
     if project_id is not None:
-        query = query.replace("WHERE ", "WHERE project_id = ? AND ", 1)
-        params = (project_id, now, timeout)
-    conn.execute(query, params)
+        query += " AND project_id = %s"
+        params = (project_id,)
+    for row in conn.execute(query, params).fetchall():
+        hb = _parse_heartbeat(row["last_heartbeat_at"])
+        if hb is not None and (now - hb).total_seconds() > timeout:
+            conn.execute(
+                "UPDATE intents SET worker = NULL WHERE id = %s AND project_id = %s",
+                (row["id"], row["project_id"]),
+            )
 
 
-def expire_reason_leases(conn: sqlite3.Connection, project_id: str | None = None) -> None:
+def expire_reason_leases(conn: Connection, project_id: str | None = None) -> None:
     timeout = get_reason_timeout(conn)
-    now = utcnow()
-    query = """
-        UPDATE projects
-        SET reason_worker = NULL,
-            reason_trigger = NULL,
-            reason_started_at = NULL,
-            reason_last_heartbeat_at = NULL
-        WHERE reason_worker IS NOT NULL
-          AND reason_last_heartbeat_at IS NOT NULL
-          AND (julianday(?) - julianday(reason_last_heartbeat_at)) * 86400 > ?
-    """
-    params: tuple = (now, timeout)
+    now = datetime.now(timezone.utc)
+    query = (
+        "SELECT id, reason_last_heartbeat_at FROM projects "
+        "WHERE reason_worker IS NOT NULL AND reason_last_heartbeat_at IS NOT NULL"
+    )
+    params: tuple = ()
     if project_id is not None:
-        query = query.replace("WHERE ", "WHERE id = ? AND ", 1)
-        params = (project_id, now, timeout)
-    conn.execute(query, params)
+        query += " AND id = %s"
+        params = (project_id,)
+    for row in conn.execute(query, params).fetchall():
+        hb = _parse_heartbeat(row["reason_last_heartbeat_at"])
+        if hb is not None and (now - hb).total_seconds() > timeout:
+            clear_project_reason(conn, row["id"])

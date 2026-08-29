@@ -1,12 +1,60 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from urllib.parse import unquote, urlparse
+
+import pymysql
+import pytest
 
 from lightning.dispatcher.config import DispatchConfig
 from lightning.dispatcher.protocol.client import ApiResult
 from lightning.dispatcher.workers.base import DriverResult
 from lightning.dispatcher.workers.health import HealthResult
+from lightning.server import db
 from lightning.server.models import Fact, Hint, Intent, ProjectDetail, ProjectMeta
+
+TEST_DB_URL = os.environ.get(
+    "TEST_DATABASE_URL", "mysql://lightning:lightning@127.0.0.1:3306/lightning_test"
+)
+
+
+def _test_db_parts() -> tuple[dict, str]:
+    parsed = urlparse(TEST_DB_URL)
+    dbname = (parsed.path or "").lstrip("/") or "lightning_test"
+    server_kwargs = {
+        "host": parsed.hostname or "127.0.0.1",
+        "port": parsed.port or 3306,
+        "user": unquote(parsed.username or "root"),
+        "password": unquote(parsed.password or ""),
+        "charset": "utf8mb4",
+    }
+    return server_kwargs, dbname
+
+
+def reset_test_database() -> None:
+    server_kwargs, dbname = _test_db_parts()
+    conn = pymysql.connect(**server_kwargs)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP DATABASE IF EXISTS `{dbname}`")
+            cur.execute(
+                f"CREATE DATABASE `{dbname}` DEFAULT CHARACTER SET utf8mb4 "
+                "COLLATE utf8mb4_unicode_ci"
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def mysql_ready(monkeypatch):
+    try:
+        reset_test_database()
+    except (pymysql.MySQLError, OSError) as exc:
+        pytest.skip(f"MySQL not available: {exc}")
+    monkeypatch.setattr(db, "_db_kwargs", None)
+    db.configure(TEST_DB_URL)
 
 
 def make_config() -> DispatchConfig:

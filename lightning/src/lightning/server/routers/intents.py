@@ -41,7 +41,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         iid = next_intent_id(conn, project_id)
         claimed = body.worker is not None
         conn.execute(
-            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO intents (id, project_id, to_fact_id, description, creator, worker, last_heartbeat_at, created_at, concluded_at) VALUES (%s, %s, NULL, %s, %s, %s, %s, %s, NULL)",
             (
                 iid,
                 project_id,
@@ -54,7 +54,7 @@ def create_intent(project_id: str, body: CreateIntentRequest):
         )
         for fid in body.from_:
             conn.execute(
-                "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES (?, ?, ?)",
+                "INSERT INTO intent_sources (intent_id, project_id, fact_id) VALUES (%s, %s, %s)",
                 (iid, project_id, fid),
             )
 
@@ -82,12 +82,12 @@ def heartbeat(project_id: str, intent_id: str, body: HeartbeatRequest):
 
         now = utcnow()
         conn.execute(
-            "UPDATE intents SET worker = ?, last_heartbeat_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE intents SET worker = %s, last_heartbeat_at = %s WHERE id = %s AND project_id = %s",
             (body.worker, now, intent_id, project_id),
         )
 
         updated = conn.execute(
-            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            "SELECT * FROM intents WHERE id = %s AND project_id = %s",
             (intent_id, project_id),
         ).fetchone()
         return intent_to_model(conn, updated, project_id)
@@ -104,11 +104,11 @@ def release(project_id: str, intent_id: str, body: HeartbeatRequest):
 
         if row["worker"] == body.worker:
             conn.execute(
-                "UPDATE intents SET worker = NULL WHERE id = ? AND project_id = ?",
+                "UPDATE intents SET worker = NULL WHERE id = %s AND project_id = %s",
                 (intent_id, project_id),
             )
             row = conn.execute(
-                "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+                "SELECT * FROM intents WHERE id = %s AND project_id = %s",
                 (intent_id, project_id),
             ).fetchone()
 
@@ -128,16 +128,16 @@ def conclude(project_id: str, intent_id: str, body: ConcludeRequest):
         fid = next_fact_id(conn, project_id)
 
         conn.execute(
-            "INSERT INTO facts (id, project_id, description) VALUES (?, ?, ?)",
+            "INSERT INTO facts (id, project_id, description) VALUES (%s, %s, %s)",
             (fid, project_id, body.description),
         )
         conn.execute(
-            "UPDATE intents SET to_fact_id = ?, worker = ?, last_heartbeat_at = ?, concluded_at = ? WHERE id = ? AND project_id = ?",
+            "UPDATE intents SET to_fact_id = %s, worker = %s, last_heartbeat_at = %s, concluded_at = %s WHERE id = %s AND project_id = %s",
             (fid, body.worker, now, now, intent_id, project_id),
         )
 
         updated = conn.execute(
-            "SELECT * FROM intents WHERE id = ? AND project_id = ?",
+            "SELECT * FROM intents WHERE id = %s AND project_id = %s",
             (intent_id, project_id),
         ).fetchone()
 
