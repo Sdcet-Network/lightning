@@ -1,0 +1,12 @@
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+.pytest_cache/
+.playwright-cli/
+.venv/
+datas/
+dispatch.yaml
+
+# Bundled pi runtime (npm node_modules) — installed separately, never committed
+lightning/bundled/
